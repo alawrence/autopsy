@@ -319,12 +319,7 @@ public final class IngestTopComponent extends TopComponent implements DataExplor
     @Override
     public void componentClosed() {
         logger.log(Level.INFO, "IngestTopComponent closed()");
-        //stop workers if running
-        if (manager != null) {
-            manager.stopAll();
-        }
-        //clear inbox
-        messagePanel.clearMessages();
+
     }
 
     void enableStartButton(boolean enable) {

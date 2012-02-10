@@ -49,7 +49,7 @@ import org.sleuthkit.datamodel.Image;
  * IngestManager sets up and manages ingest services
  * runs them in a background thread
  * notifies services when work is complete or should be interrupted
- * processes messages from services in postMessage() and posts them to GUI
+ * processes messages from services via messenger proxy  and posts them to GUI
  * 
  */
 public class IngestManager {
@@ -57,7 +57,7 @@ public class IngestManager {
     private static final Logger logger = Logger.getLogger(IngestManager.class.getName());
     private IngestTopComponent tc;
     private IngestManagerStats stats;
-    private int updateFrequency;
+    private volatile int updateFrequency = 60; //in seconds
     //queues
     private final ImageQueue imageQueue = new ImageQueue();   // list of services and images to analyze
     private final FsContentQueue fsContentQueue = new FsContentQueue();
@@ -69,16 +69,19 @@ public class IngestManager {
     //services
     final Collection<IngestServiceImage> imageServices = enumerateImageServices();
     final Collection<IngestServiceFsContent> fsContentServices = enumerateFsContentServices();
+    //manager proxy
+    final IngestManagerProxy managerProxy = new IngestManagerProxy(this);
     //notifications
     private final static PropertyChangeSupport pcs = new PropertyChangeSupport(IngestManager.class);
 
     private enum IngestManagerEvents {
 
-        SERVICE_STARTED, SERVICE_COMPLETED, SERVICE_STOPPED
+        SERVICE_STARTED, SERVICE_COMPLETED, SERVICE_STOPPED, SERVICE_HAS_DATA
     };
     public final static String SERVICE_STARTED_EVT = IngestManagerEvents.SERVICE_STARTED.name();
     public final static String SERVICE_COMPLETED_EVT = IngestManagerEvents.SERVICE_COMPLETED.name();
     public final static String SERVICE_STOPPED_EVT = IngestManagerEvents.SERVICE_STOPPED.name();
+    public final static String SERVICE_HAS_DATA_EVT = IngestManagerEvents.SERVICE_HAS_DATA.name();
     //initialization
     //private boolean initialized = false;
 
@@ -99,7 +102,7 @@ public class IngestManager {
         pcs.addPropertyChangeListener(l);
     }
 
-    static synchronized void firePropertyChange(String property, String serviceName) {
+    public static synchronized void firePropertyChange(String property, String serviceName) {
         pcs.firePropertyChange(property, serviceName, null);
     }
 
@@ -193,7 +196,7 @@ public class IngestManager {
                         imageIngesters.add(newImageWorker);
 
                         //image services are now initialized per instance
-                        quService.init(this);
+                        quService.init(managerProxy);
                         newImageWorker.execute();
                         IngestManager.firePropertyChange(SERVICE_STARTED_EVT, quService.getName());
                     }
@@ -223,7 +226,7 @@ public class IngestManager {
             fsContentIngester = new IngestFsContentThread();
             //init all fs services, everytime new worker starts
             for (IngestServiceFsContent s : fsContentServices) {
-                s.init(this);
+                s.init(managerProxy);
             }
             fsContentIngester.execute();
         }
@@ -265,22 +268,15 @@ public class IngestManager {
             }
         }
 
-        //workaround for jdbc call to complete
-        //TODO synchronize this if possible   
-        try {
-            Thread.sleep(300);
-        } catch (InterruptedException e) {
-        }
-
         logger.log(Level.INFO, "stopped all"); 
     }
 
     /**
-     * returns the current minimal update frequency setting
-     * Services should call this between processing iterations to get current setting
+     * returns the current minimal update frequency setting in seconds
+     * Services should call this at init() to get current setting
      * and use the setting to change notification and data refresh intervals
      */
-    public synchronized int getUpdateFrequency() {
+    int getUpdateFrequency() {
         return updateFrequency;
     }
 
@@ -288,7 +284,7 @@ public class IngestManager {
      * set new minimal update frequency services should use
      * @param frequency 
      */
-    synchronized void setUpdateFrequency(int frequency) {
+    void setUpdateFrequency(int frequency) {
         this.updateFrequency = frequency;
     }
 
@@ -306,7 +302,7 @@ public class IngestManager {
      * IngestService should make an attempt not to publish the same message multiple times.
      * Viewer will attempt to identify duplicate messages and filter them out (slower)
      */
-    public synchronized void postMessage(final IngestMessage message) {
+     synchronized void postMessage(final IngestMessage message) {
 
         if (stats != null) {
             //record the error for stats, if stats are running
