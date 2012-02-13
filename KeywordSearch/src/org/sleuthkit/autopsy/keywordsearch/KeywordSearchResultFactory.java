@@ -202,6 +202,7 @@ public class KeywordSearchResultFactory extends ChildFactory<KeyValue> {
         }
 
 
+        @Override
         protected boolean createKeys(List<KeyValue> toPopulate) {
             //final String origQuery = queryThing.getName();
             final KeyValueQuery queryThingQuery = (KeyValueQuery) queryThing;
